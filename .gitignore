@@ -1,0 +1,17 @@
+# Never commit real credentials
+config.json
+src/config.json
+
+# Python venv / caches
+.venv/
+__pycache__/
+*.pyc
+
+# Generated icons & logs
+icon*.png
+preview.png
+bar*.png
+*.log
+
+# macOS
+.DS_Store

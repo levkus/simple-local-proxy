@@ -1,0 +1,29 @@
+{
+  "_comment": "Copy this file to config.json (install.sh does it for you) and put your REAL proxies below. config.json is gitignored — never commit credentials.",
+  "listen_host": "127.0.0.1",
+  "listen_port": 13546,
+  "active": "direct",
+  "icon": {
+    "_comment": "Any SF Symbol name. Run make_icon.py with no args to render a palette of candidates. point 15-18, weight regular/medium.",
+    "symbol": "shuffle",
+    "point": 16,
+    "weight": "regular"
+  },
+  "proxies": [
+    {
+      "name": "work-https",
+      "_note": "HTTPS proxy = TLS to the proxy itself. Add \"insecure\": true if it has a self-signed cert.",
+      "url": "https://USER:PASSWORD@proxy.example.com:8443"
+    },
+    {
+      "name": "work-http",
+      "_note": "Plain HTTP proxy.",
+      "url": "http://USER:PASSWORD@proxy.example.com:8080"
+    },
+    {
+      "name": "direct",
+      "_note": "Empty url = no upstream, connect straight out.",
+      "url": ""
+    }
+  ]
+}
