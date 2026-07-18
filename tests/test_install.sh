@@ -36,7 +36,10 @@ print -r -- "== install (fresh, port 20001) =="
   || fail "installer exited non-zero"
 
 check "config.json created"            test -f "$APP_DIR/config.json"
-check "config.json is chmod 600"       test "$(stat -f '%Lp' "$APP_DIR/config.json" 2>/dev/null || stat -c '%a' "$APP_DIR/config.json")" = "600"
+# GNU stat first: on Linux `-f` means --file-system and *succeeds* with output
+# that isn't a mode, so a BSD-first probe would silently compare garbage.
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+check "config.json is chmod 600"       test "$(mode_of "$APP_DIR/config.json")" = "600"
 check "port written to config"         python3 -c "import json,sys; sys.exit(0 if json.load(open('$APP_DIR/config.json'))['listen_port']==20001 else 1)"
 check "alias block added"              contains "$RC" "menubar-proxy-switcher"
 check "alias uses chosen port"         contains "$RC" "127.0.0.1:20001"
