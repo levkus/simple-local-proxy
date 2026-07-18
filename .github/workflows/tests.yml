@@ -1,0 +1,93 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # The relay core is pure stdlib, so it runs anywhere — keep this job fast and
+  # cheap, it's the one that actually guards the logic.
+  relay:
+    name: relay core (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run test suite
+        run: python -m unittest discover -s tests -v
+
+  scripts:
+    name: installer scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Syntax-check install.sh / uninstall.sh
+        run: |
+          zsh -n install.sh
+          zsh -n uninstall.sh
+
+      - name: Scripts are executable
+        run: |
+          test -x install.sh || { echo "install.sh is not executable"; exit 1; }
+          test -x uninstall.sh || { echo "uninstall.sh is not executable"; exit 1; }
+
+      - name: No credentials committed
+        run: |
+          # config.json holds real proxy credentials and must never be tracked.
+          if git ls-files --error-unmatch config.json >/dev/null 2>&1; then
+            echo "config.json is tracked by git — it contains credentials!"
+            exit 1
+          fi
+          echo "ok: config.json is not tracked"
+
+  # macOS-only checks: that the GUI dependency actually installs (the pyobjc
+  # wheel story) and that the relay starts headless on the real target platform.
+  macos:
+    name: macOS install deps + headless relay
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install rumps (pyobjc) into a venv
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install --upgrade pip
+          ./.venv/bin/pip install rumps
+          ./.venv/bin/python -c "import rumps; print('rumps', rumps.__version__)"
+
+      - name: Relay starts headless and proxies a request
+        run: |
+          mkdir -p run
+          cat > run/config.json <<'JSON'
+          {"listen_host":"127.0.0.1","listen_port":18999,"active":"direct",
+           "proxies":[{"name":"direct","url":""}]}
+          JSON
+          cp src/proxy_relay.py run/
+          PROXY_RELAY_HOME="$PWD/run" ./.venv/bin/python run/proxy_relay.py --headless &
+          RELAY_PID=$!
+          sleep 2
+          # tunnel a real request through the relay in direct mode
+          curl -sS -o /dev/null -w 'status=%{http_code}\n' \
+               -x http://127.0.0.1:18999 https://example.com --max-time 30
+          kill $RELAY_PID
+
+      - name: Test suite on macOS
+        run: ./.venv/bin/python -m unittest discover -s tests -v

@@ -1,5 +1,7 @@
 # Menubar Proxy Switcher (macOS)
 
+[![tests](https://github.com/levkus/simple-local-proxy/actions/workflows/tests.yml/badge.svg)](https://github.com/levkus/simple-local-proxy/actions/workflows/tests.yml)
+
 A tiny local proxy relay with a menubar icon that lets you **switch between
 upstream proxies with a click** — no restarting the app that's using the proxy.
 
@@ -176,6 +178,32 @@ directly, or opens a tunnel through the upstream proxy (doing TLS-to-proxy +
 menubar app that edits the active upstream and installs a native SF Symbol icon
 on the status item. State switches take effect on the next connection — no
 restart of the relay or the client.
+
+## Development
+
+Tests run automatically on GitHub Actions for every push and pull request — you
+don't need to run anything locally. The suite covers the relay core: upstream
+URL parsing, `Proxy-Authorization`, config loading/saving, and real traffic
+pushed through the relay (direct, via an HTTP proxy, via a TLS `https://` proxy)
+including **switching the upstream mid-flight**. The menubar layer isn't unit
+tested — it's a thin AppKit wrapper that needs a real GUI session.
+
+CI jobs:
+
+| Job | Runner | What it checks |
+|-----|--------|----------------|
+| `relay core` | ubuntu, Python 3.11–3.13 | the test suite (stdlib only, no deps) |
+| `installer scripts` | ubuntu | `zsh -n` syntax, executable bits, and that `config.json` was never committed |
+| `macOS` | macos-latest | that `rumps`/`pyobjc` installs, the relay runs headless and proxies a live request |
+
+If you do want to run them locally:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The tests are hermetic — throwaway servers on `127.0.0.1` and temp config files.
+They never touch `~/.proxy-relay`, your LaunchAgent, or your real proxies.
 
 ## License
 

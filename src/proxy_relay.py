@@ -285,7 +285,9 @@ def start_server():
     host, port = STATE.listen_addr()
     server = ThreadingTCPServer((host, port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    sys.stderr.write(f"[relay] listening on {host}:{port}\n")
+    # Report the address actually bound (port 0 means "pick a free one").
+    bound_host, bound_port = server.server_address[:2]
+    sys.stderr.write(f"[relay] listening on {bound_host}:{bound_port}\n")
     return server
 
 
