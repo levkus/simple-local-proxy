@@ -10,7 +10,7 @@ import os
 import sys
 
 import AppKit
-from Foundation import NSMakeRect, NSMakePoint
+from Foundation import NSMakePoint, NSMakeRect
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 

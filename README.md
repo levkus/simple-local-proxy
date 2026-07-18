@@ -84,6 +84,14 @@ Upstream `url` forms:
 | `http://user:pass@host:port`  | Plain HTTP proxy. |
 | `""` (empty)                  | Direct — no upstream, connect straight out. |
 
+Passwords containing `@` or `:` must be percent-encoded (`p@ss` → `p%40ss`).
+
+> **`listen_host` stays on loopback.** The relay requires no authentication and
+> attaches your upstream credentials to everything it forwards, so binding it to
+> `0.0.0.0` would hand an open, credentialed proxy to everyone on your network.
+> It refuses to start on a non-loopback address unless you also set
+> `"allow_remote": true`.
+
 `listen_port` is chosen during install (default 17872). The aliases and the
 desktop launcher are generated from it. To change it later, re-run
 `./install.sh` and enter the new port — it rewrites the alias block, the
@@ -182,28 +190,36 @@ restart of the relay or the client.
 ## Development
 
 Tests run automatically on GitHub Actions for every push and pull request — you
-don't need to run anything locally. The suite covers the relay core: upstream
-URL parsing, `Proxy-Authorization`, config loading/saving, and real traffic
-pushed through the relay (direct, via an HTTP proxy, via a TLS `https://` proxy)
-including **switching the upstream mid-flight**. The menubar layer isn't unit
-tested — it's a thin AppKit wrapper that needs a real GUI session.
+don't need to run anything locally. They cover the relay core: upstream URL
+parsing, `Proxy-Authorization`, config loading/saving, and real traffic pushed
+through the relay (direct, via an HTTP proxy, via a TLS `https://` proxy),
+including **switching the upstream mid-flight**, plus regression tests for every
+bug listed in [CHANGELOG.md](CHANGELOG.md) — keep-alive routing, pipelined
+CONNECT, IPv6 targets, half-close, and that TLS verification stays on by
+default. `install.sh` / `uninstall.sh` are exercised end-to-end against a
+throwaway `HOME`. The menubar layer isn't unit tested — it's a thin AppKit
+wrapper that needs a real GUI session.
 
 CI jobs:
 
 | Job | Runner | What it checks |
 |-----|--------|----------------|
-| `relay core` | ubuntu, Python 3.11–3.13 | the test suite (stdlib only, no deps) |
-| `installer scripts` | ubuntu | `zsh -n` syntax, executable bits, and that `config.json` was never committed |
+| `relay core` | ubuntu, Python 3.11–3.13 | the Python suite (stdlib only, no deps) |
+| `ruff` | ubuntu | lint |
+| `installer scripts` | ubuntu | `zsh -n` syntax, executable bits, the end-to-end install/uninstall test, and that `config.json` was never committed |
 | `macOS` | macos-latest | that `rumps`/`pyobjc` installs, the relay runs headless and proxies a live request |
 
 If you do want to run them locally:
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v   # relay core
+zsh tests/test_install.sh                  # installer / uninstaller
+ruff check src tests                       # lint
 ```
 
-The tests are hermetic — throwaway servers on `127.0.0.1` and temp config files.
-They never touch `~/.proxy-relay`, your LaunchAgent, or your real proxies.
+The tests are hermetic — throwaway servers on `127.0.0.1`, temp config files and
+a sandboxed `HOME`. They never touch `~/.proxy-relay`, your LaunchAgent, your
+`~/.zshrc`, or your real proxies.
 
 ## License
 

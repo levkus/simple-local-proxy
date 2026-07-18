@@ -39,17 +39,22 @@ if [ -f "$PLIST" ]; then
   echo "    removed $PLIST"
 fi
 
-# Belt and braces: kill any stray menubar process still holding the port.
-pkill -f "$APP_DIR/menubar.py" 2>/dev/null && echo "    killed stray relay process"
+# Belt and braces: kill any stray process still holding the port, including a
+# relay started by hand with `proxy_relay.py --headless`.
+for script in menubar.py proxy_relay.py; do
+  pkill -f "$APP_DIR/$script" 2>/dev/null && echo "    killed stray $script process"
+done
 
 # --- 2. Strip the alias block from ~/.zshrc --------------------------------- #
 if [ -f "$RC" ] && grep -qF "$MARK_START" "$RC"; then
   BACKUP="$RC.proxyrelay-backup-$(date +%Y%m%d%H%M%S)"
   cp "$RC" "$BACKUP"
   TMP="$(mktemp)"
+  # Exact (trimmed) marker match, matching how install.sh rewrites the block.
   awk -v s="$MARK_START" -v e="$MARK_END" '
-    index($0, s) { skip = 1; next }
-    index($0, e) { skip = 0; next }
+    { line = $0; gsub(/^[ \t]+|[ \t]+$/, "", line) }
+    line == s { skip = 1; next }
+    line == e { skip = 0; next }
     !skip { print }
   ' "$RC" > "$TMP" && mv "$TMP" "$RC"
   echo "    removed alias block from $RC (backup: $BACKUP)"

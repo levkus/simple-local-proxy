@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "W",    # warnings
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+]
+ignore = [
+    "E501",    # long lines are caught by the formatter, not worth failing CI over
+    "B008",    # rumps callbacks legitimately pass calls as defaults
+    "SIM105",  # `contextlib.suppress` is slower and less obvious in hot socket paths
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers deliberately, and import fixtures for effect.
+"tests/*" = ["E402", "F401"]
+# AppKit's ObjC bridge uses trailing-underscore method names by convention.
+"src/menubar.py" = ["N802"]
+"src/make_icon.py" = ["N802"]

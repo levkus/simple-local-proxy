@@ -1,223 +1,29 @@
-"""Tests for the proxy relay core.
+"""Core tests: upstream parsing, auth headers, config state, and real traffic.
 
-These are hermetic: everything runs on 127.0.0.1 against throwaway servers and
-temp config files. Nothing touches your real ~/.proxy-relay, your LaunchAgent,
-or the network.
-
-Layout:
-  * unit tests      — upstream URL parsing and Proxy-Authorization headers
-  * state tests     — config load/save and switching the active upstream
-  * integration     — real traffic pushed through the relay: direct, via an
-                      HTTP upstream proxy, via an HTTPS (TLS) upstream proxy,
-                      plus live switching and upstream failure handling
+Hermetic — everything runs on 127.0.0.1 against throwaway servers and temp
+config files. Nothing touches a real ~/.proxy-relay, LaunchAgent, or network.
+Regression tests for specific review findings live in test_request_handling.py.
 """
 
 import base64
 import json
 import os
 import socket
-import ssl
-import subprocess
-import sys
 import tempfile
-import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
-
-import proxy_relay  # noqa: E402
-
-ORIGIN_BODY = b"HELLO-ORIGIN"
-
-
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
-def read_head(sock):
-    """Read until the end of HTTP headers."""
-    buf = b""
-    while b"\r\n\r\n" not in buf:
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        buf += chunk
-    return buf
-
-
-def read_all(sock):
-    out = b""
-    while True:
-        try:
-            chunk = sock.recv(4096)
-        except OSError:
-            break
-        if not chunk:
-            break
-        out += chunk
-    return out
-
-
-def pipe(a, b):
-    """Bidirectional splice, returns when either side closes."""
-
-    def one(src, dst):
-        try:
-            while True:
-                data = src.recv(65536)
-                if not data:
-                    break
-                dst.sendall(data)
-        except OSError:
-            pass
-        finally:
-            try:
-                dst.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
-
-    t = threading.Thread(target=one, args=(a, b), daemon=True)
-    t.start()
-    one(b, a)
-    t.join(timeout=5)
-    for sock in (a, b):
-        try:
-            sock.close()
-        except OSError:
-            pass
-
-
-class Origin:
-    """A plain HTTP server that answers every GET with ORIGIN_BODY."""
-
-    class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(ORIGIN_BODY)))
-            self.end_headers()
-            self.wfile.write(ORIGIN_BODY)
-
-        def log_message(self, *_args):
-            pass
-
-    def __init__(self):
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._Handler)
-        self.port = self.server.server_address[1]
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def stop(self):
-        self.server.shutdown()
-        self.server.server_close()
-
-
-class FakeUpstream:
-    """A minimal upstream proxy that records what the relay sent it.
-
-    Speaks CONNECT (tunnelling to the real target) and absolute-form requests.
-    Optionally wraps itself in TLS, to stand in for an `https://` proxy.
-    """
-
-    def __init__(self, tls_cert=None, reject_with=None):
-        self.tls_cert = tls_cert          # (certfile, keyfile) or None
-        self.reject_with = reject_with    # e.g. b"HTTP/1.1 407 ..." to refuse
-        self.seen_auth = []               # Proxy-Authorization values observed
-        self.seen_targets = []            # CONNECT targets / request lines
-        self._closed = False
-
-        self.sock = socket.socket()
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("127.0.0.1", 0))
-        self.sock.listen(16)
-        self.port = self.sock.getsockname()[1]
-        threading.Thread(target=self._serve, daemon=True).start()
-
-    def _serve(self):
-        while not self._closed:
-            try:
-                conn, _ = self.sock.accept()
-            except OSError:
-                return
-            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
-
-    def _handle(self, conn):
-        try:
-            if self.tls_cert:
-                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                ctx.load_cert_chain(self.tls_cert[0], self.tls_cert[1])
-                conn = ctx.wrap_socket(conn, server_side=True)
-
-            head = read_head(conn)
-            if not head:
-                return
-            lines = head.split(b"\r\n")
-            request_line = lines[0].decode("latin1")
-            self.seen_targets.append(request_line)
-            for line in lines[1:]:
-                if line.lower().startswith(b"proxy-authorization:"):
-                    self.seen_auth.append(line.split(b":", 1)[1].strip().decode("latin1"))
-
-            if self.reject_with:
-                conn.sendall(self.reject_with)
-                conn.close()
-                return
-
-            parts = request_line.split()
-            if parts[0].upper() == "CONNECT":
-                host, _, port = parts[1].partition(":")
-                target = socket.create_connection((host, int(port)), timeout=10)
-                conn.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                pipe(conn, target)
-            else:
-                # absolute-form request: forward it on to the origin
-                from urllib.parse import urlsplit
-
-                u = urlsplit(parts[1])
-                target = socket.create_connection((u.hostname, u.port or 80), timeout=10)
-                path = u.path or "/"
-                rebuilt = head.replace(
-                    f"{parts[0]} {parts[1]} {parts[2]}".encode(),
-                    f"{parts[0]} {path} {parts[2]}".encode(),
-                    1,
-                )
-                target.sendall(rebuilt)
-                pipe(conn, target)
-        except (OSError, ssl.SSLError, IndexError):
-            pass
-        finally:
-            try:
-                conn.close()
-            except OSError:
-                pass
-
-    def stop(self):
-        self._closed = True
-        try:
-            self.sock.close()
-        except OSError:
-            pass
-
-
-def openssl_available():
-    try:
-        subprocess.run(["openssl", "version"], check=True, capture_output=True)
-        return True
-    except (OSError, subprocess.CalledProcessError):
-        return False
-
-
-def make_self_signed(tmpdir):
-    cert = os.path.join(tmpdir, "cert.pem")
-    key = os.path.join(tmpdir, "key.pem")
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", key, "-out", cert, "-days", "1", "-nodes",
-            "-subj", "/CN=127.0.0.1",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    return cert, key
+from helpers import (
+    ORIGIN_BODY,
+    FakeUpstream,
+    Origin,
+    fetch_through_tunnel,
+    make_self_signed,
+    openssl_available,
+    proxy_relay,
+    read_all,
+    read_head,
+    start_relay,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -256,6 +62,11 @@ class TestParseUpstream(unittest.TestCase):
         self.assertEqual(up["user"], "user@corp")
         self.assertEqual(up["pw"], "p@ss:word")
 
+    def test_ipv6_upstream_literal(self):
+        up = proxy_relay.parse_upstream("http://[2001:db8::1]:8080")
+        self.assertEqual(up["host"], "2001:db8::1")
+        self.assertEqual(up["port"], 8080)
+
 
 class TestAuthHeader(unittest.TestCase):
     def test_no_credentials_means_no_header(self):
@@ -284,13 +95,15 @@ class TestState(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = os.path.join(self.tmp.name, "config.json")
-        self._orig_config_path = proxy_relay.CONFIG_PATH
-        proxy_relay.CONFIG_PATH = self.path
-        self.addCleanup(setattr, proxy_relay, "CONFIG_PATH", self._orig_config_path)
 
     def write(self, cfg):
         with open(self.path, "w") as fh:
             json.dump(cfg, fh)
+
+    def state(self):
+        state = proxy_relay.State(self.path)
+        state.load()
+        return state
 
     def test_loads_active_proxy(self):
         self.write({
@@ -298,8 +111,7 @@ class TestState(unittest.TestCase):
             "active": "b",
             "proxies": [{"name": "a", "url": ""}, {"name": "b", "url": "http://h:1"}],
         })
-        state = proxy_relay.State()
-        state.load()
+        state = self.state()
         self.assertEqual(state.current()["name"], "b")
         self.assertEqual(state.listen_addr(), ("127.0.0.1", 1234))
 
@@ -308,29 +120,32 @@ class TestState(unittest.TestCase):
             "active": "a",
             "proxies": [{"name": "a", "url": ""}, {"name": "b", "url": "http://h:1"}],
         })
-        state = proxy_relay.State()
-        state.load()
+        state = self.state()
         state.set_active("b")
         self.assertEqual(state.current()["name"], "b")
 
         # a fresh State reading the same file must see the change
-        reloaded = proxy_relay.State()
+        reloaded = proxy_relay.State(self.path)
         reloaded.load()
         self.assertEqual(reloaded.current()["name"], "b")
 
     def test_unknown_active_resolves_to_nothing(self):
         self.write({"active": "missing", "proxies": [{"name": "a", "url": ""}]})
-        state = proxy_relay.State()
-        state.load()
-        self.assertIsNone(state.current())
+        self.assertIsNone(self.state().current())
 
     def test_saved_config_is_not_world_readable(self):
         self.write({"active": "a", "proxies": [{"name": "a", "url": ""}]})
-        state = proxy_relay.State()
-        state.load()
+        state = self.state()
         state.set_active("a")
         mode = os.stat(self.path).st_mode & 0o777
         self.assertEqual(mode, 0o600, "config holds credentials; must stay chmod 600")
+
+    def test_current_is_a_copy(self):
+        self.write({"active": "a", "proxies": [{"name": "a", "url": "http://h:1"}]})
+        state = self.state()
+        got = state.current()
+        got["url"] = "http://tampered:1"
+        self.assertEqual(state.current()["url"], "http://h:1")
 
 
 # --------------------------------------------------------------------------- #
@@ -342,53 +157,24 @@ class TestRelayTraffic(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.origin = Origin()
         self.addCleanup(self.origin.stop)
-        self._orig_config_path = proxy_relay.CONFIG_PATH
-        self.addCleanup(setattr, proxy_relay, "CONFIG_PATH", self._orig_config_path)
 
-    def start_relay(self, proxies, active):
-        path = os.path.join(self.tmp.name, "config.json")
-        with open(path, "w") as fh:
-            json.dump(
-                {"listen_host": "127.0.0.1", "listen_port": 0,
-                 "active": active, "proxies": proxies}, fh)
-        proxy_relay.CONFIG_PATH = path
-        proxy_relay.STATE.load()
-        server = proxy_relay.start_server()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        return server.server_address[1]
-
-    def fetch_through_tunnel(self, relay_port):
-        """CONNECT to the origin through the relay, then GET / down the tunnel."""
-        sock = socket.create_connection(("127.0.0.1", relay_port), timeout=10)
-        sock.sendall(
-            f"CONNECT 127.0.0.1:{self.origin.port} HTTP/1.1\r\n"
-            f"Host: 127.0.0.1:{self.origin.port}\r\n\r\n".encode()
-        )
-        head = read_head(sock)
-        status = head.split(b"\r\n")[0]
-        if b" 200 " not in status:
-            sock.close()
-            return status, b""
-        sock.sendall(b"GET / HTTP/1.1\r\nHost: origin\r\nConnection: close\r\n\r\n")
-        body = read_all(sock)
-        sock.close()
-        return status, body
+    def relay(self, proxies, active):
+        return start_relay(self.tmp.name, proxies, active, self.addCleanup)
 
     # --- direct ------------------------------------------------------------ #
     def test_direct_connect_tunnel(self):
-        port = self.start_relay([{"name": "direct", "url": ""}], "direct")
-        status, body = self.fetch_through_tunnel(port)
+        _, port = self.relay([{"name": "direct", "url": ""}], "direct")
+        status, body = fetch_through_tunnel(port, self.origin)
         self.assertIn(b" 200 ", status)
         self.assertIn(ORIGIN_BODY, body)
 
     def test_direct_plain_http_request(self):
         """Absolute-form GET (no CONNECT) gets rewritten and forwarded."""
-        port = self.start_relay([{"name": "direct", "url": ""}], "direct")
+        _, port = self.relay([{"name": "direct", "url": ""}], "direct")
         sock = socket.create_connection(("127.0.0.1", port), timeout=10)
         sock.sendall(
-            f"GET http://127.0.0.1:{self.origin.port}/ HTTP/1.1\r\n"
-            f"Host: 127.0.0.1:{self.origin.port}\r\nConnection: close\r\n\r\n".encode()
+            f"GET http://{self.origin.authority}/ HTTP/1.1\r\n"
+            f"Host: {self.origin.authority}\r\n\r\n".encode()
         )
         self.assertIn(ORIGIN_BODY, read_all(sock))
         sock.close()
@@ -397,10 +183,10 @@ class TestRelayTraffic(unittest.TestCase):
     def test_connect_through_http_upstream_with_auth(self):
         upstream = FakeUpstream()
         self.addCleanup(upstream.stop)
-        port = self.start_relay(
+        _, port = self.relay(
             [{"name": "up", "url": f"http://alice:s3cret@127.0.0.1:{upstream.port}"}], "up")
 
-        status, body = self.fetch_through_tunnel(port)
+        status, body = fetch_through_tunnel(port, self.origin)
         self.assertIn(b" 200 ", status)
         self.assertIn(ORIGIN_BODY, body)
 
@@ -412,12 +198,11 @@ class TestRelayTraffic(unittest.TestCase):
     def test_upstream_rejection_surfaces_as_502(self):
         upstream = FakeUpstream(reject_with=b"HTTP/1.1 407 Proxy Auth Required\r\n\r\n")
         self.addCleanup(upstream.stop)
-        port = self.start_relay(
+        _, port = self.relay(
             [{"name": "up", "url": f"http://127.0.0.1:{upstream.port}"}], "up")
 
         sock = socket.create_connection(("127.0.0.1", port), timeout=10)
-        sock.sendall(
-            f"CONNECT 127.0.0.1:{self.origin.port} HTTP/1.1\r\n\r\n".encode())
+        sock.sendall(f"CONNECT {self.origin.authority} HTTP/1.1\r\n\r\n".encode())
         head = read_head(sock)
         sock.close()
         self.assertIn(b"502", head.split(b"\r\n")[0])
@@ -428,7 +213,7 @@ class TestRelayTraffic(unittest.TestCase):
         cert, key = make_self_signed(self.tmp.name)
         upstream = FakeUpstream(tls_cert=(cert, key))
         self.addCleanup(upstream.stop)
-        port = self.start_relay(
+        _, port = self.relay(
             [{
                 "name": "tls-up",
                 "url": f"https://bob:hunter2@127.0.0.1:{upstream.port}",
@@ -437,7 +222,7 @@ class TestRelayTraffic(unittest.TestCase):
             "tls-up",
         )
 
-        status, body = self.fetch_through_tunnel(port)
+        status, body = fetch_through_tunnel(port, self.origin)
         self.assertIn(b" 200 ", status)
         self.assertIn(ORIGIN_BODY, body)
         expected = base64.b64encode(b"bob:hunter2").decode()
@@ -447,7 +232,7 @@ class TestRelayTraffic(unittest.TestCase):
     def test_switching_upstream_takes_effect_on_next_connection(self):
         upstream = FakeUpstream()
         self.addCleanup(upstream.stop)
-        port = self.start_relay(
+        state, port = self.relay(
             [
                 {"name": "direct", "url": ""},
                 {"name": "up", "url": f"http://carol:pw@127.0.0.1:{upstream.port}"},
@@ -456,22 +241,22 @@ class TestRelayTraffic(unittest.TestCase):
         )
 
         # first request: direct, upstream untouched
-        _, body = self.fetch_through_tunnel(port)
+        _, body = fetch_through_tunnel(port, self.origin)
         self.assertIn(ORIGIN_BODY, body)
         self.assertEqual(upstream.seen_targets, [])
 
         # flip the active upstream, exactly like clicking the menubar
-        proxy_relay.STATE.set_active("up")
+        state.set_active("up")
 
         # second request: same relay, same port, now via the upstream
-        _, body = self.fetch_through_tunnel(port)
+        _, body = fetch_through_tunnel(port, self.origin)
         self.assertIn(ORIGIN_BODY, body)
         self.assertTrue(any("CONNECT" in t for t in upstream.seen_targets))
 
         # and back again
-        proxy_relay.STATE.set_active("direct")
+        state.set_active("direct")
         before = len(upstream.seen_targets)
-        _, body = self.fetch_through_tunnel(port)
+        _, body = fetch_through_tunnel(port, self.origin)
         self.assertIn(ORIGIN_BODY, body)
         self.assertEqual(len(upstream.seen_targets), before, "should not touch upstream")
 
@@ -499,6 +284,19 @@ class TestExampleConfig(unittest.TestCase):
             self.assertIn("url", entry)
             # every example URL must parse (or be the empty 'direct' one)
             proxy_relay.parse_upstream(entry["url"])
+
+    def test_example_config_ships_no_credentials(self):
+        """The example must carry placeholders, never a real secret."""
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "config.example.json")
+        with open(path) as fh:
+            cfg = json.load(fh)
+        for entry in cfg["proxies"]:
+            up = proxy_relay.parse_upstream(entry["url"])
+            if up and up["pw"]:
+                self.assertEqual(
+                    up["pw"], "PASSWORD",
+                    "config.example.json must use a placeholder password")
 
 
 if __name__ == "__main__":

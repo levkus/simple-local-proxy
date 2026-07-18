@@ -26,6 +26,26 @@ jobs:
       - name: Run test suite
         run: python -m unittest discover -s tests -v
 
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Format check
+        run: ruff format --diff src tests
+        continue-on-error: true  # advisory: formatting drift shouldn't block a fix
+
   scripts:
     name: installer scripts
     runs-on: ubuntu-latest
@@ -44,6 +64,9 @@ jobs:
         run: |
           test -x install.sh || { echo "install.sh is not executable"; exit 1; }
           test -x uninstall.sh || { echo "uninstall.sh is not executable"; exit 1; }
+
+      - name: End-to-end install / uninstall against a throwaway HOME
+        run: zsh tests/test_install.sh
 
       - name: No credentials committed
         run: |
@@ -66,11 +89,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install rumps (pyobjc) into a venv
+      - name: Install pinned dependencies into a venv
         run: |
           python -m venv .venv
           ./.venv/bin/pip install --upgrade pip
-          ./.venv/bin/pip install rumps
+          ./.venv/bin/pip install -r requirements.txt
           ./.venv/bin/python -c "import rumps; print('rumps', rumps.__version__)"
 
       - name: Relay starts headless and proxies a request
@@ -91,3 +114,6 @@ jobs:
 
       - name: Test suite on macOS
         run: ./.venv/bin/python -m unittest discover -s tests -v
+
+      - name: Installer end-to-end on macOS
+        run: zsh tests/test_install.sh

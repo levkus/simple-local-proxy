@@ -2,11 +2,12 @@
 """macOS menubar UI for the proxy relay."""
 
 import os
+import subprocess
 
 import AppKit
 import rumps
 
-from proxy_relay import STATE, CONFIG_PATH
+from proxy_relay import STATE, ProxyConfigError, parse_upstream
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON = os.path.join(HERE, "icon.png")
@@ -53,13 +54,17 @@ class RelayApp(rumps.App):
             kwargs["template"] = True
         super().__init__("ProxyRelay", **kwargs)
         self._rebuild()
+        # The status item only exists once the app is running, so install the
+        # real icon from a one-shot timer just after launch.
         self._icon_timer = rumps.Timer(self._install_icon, 0.3)
         self._icon_timer.start()
 
-    def _install_icon(self, sender):
-        sender.stop()
+    # ----- icon ---------------------------------------------------------- #
+    def _install_icon(self, sender=None):
+        if sender is not None:
+            sender.stop()
         spec = dict(DEFAULT_ICON)
-        spec.update(STATE.config.get("icon") or {})
+        spec.update(STATE.snapshot().get("icon") or {})
         img = _symbol_image(spec)
         try:
             button = self._nsapp.nsstatusitem.button()
@@ -70,10 +75,11 @@ class RelayApp(rumps.App):
 
     # ----- menu construction ------------------------------------------- #
     def _rebuild(self):
-        active = STATE.config.get("active")
+        config = STATE.snapshot()
+        active = config.get("active")
         header = rumps.MenuItem(f"Active: {active or 'none'}")  # no callback = greyed label
         items = [header, rumps.separator]
-        for p in STATE.config.get("proxies", []):
+        for p in config.get("proxies", []):
             label = p["name"]
             item = rumps.MenuItem(label, callback=self._select)
             item.state = 1 if label == active else 0
@@ -115,26 +121,29 @@ class RelayApp(rumps.App):
         name, _, url = text.partition("=")
         name, url = name.strip(), url.strip()
         if not name:
+            rumps.alert("Invalid", "The proxy needs a name.")
             return
-        with STATE.lock:
-            STATE.config["proxies"] = [
-                p for p in STATE.config["proxies"] if p.get("name") != name
-            ]
-            STATE.config["proxies"].append({"name": name, "url": url})
-            STATE._resolve()
-            STATE.save_locked()
+        try:
+            parse_upstream(url)  # reject a bad URL now, not on the next request
+        except ProxyConfigError as e:
+            rumps.alert("Invalid proxy URL", str(e))
+            return
+        STATE.upsert_proxy(name, url)
         self._rebuild()
 
     def _edit(self, _):
-        os.system(f"open -t {CONFIG_PATH!r}")
+        # subprocess (not os.system) so paths with quotes or spaces can't be
+        # reinterpreted by the shell.
+        subprocess.run(["open", "-t", STATE.config_path], check=False)
 
     def _reload(self, _):
         try:
             STATE.load()
-        except Exception as e:
+        except (OSError, ValueError) as e:
             rumps.alert("Reload failed", str(e))
             return
         self._rebuild()
+        self._install_icon()  # pick up a changed icon.symbol too
 
 
 if __name__ == "__main__":
@@ -142,5 +151,5 @@ if __name__ == "__main__":
 
     ensure_config()
     STATE.load()
-    start_server()
+    start_server(STATE)
     RelayApp().run()
