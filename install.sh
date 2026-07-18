@@ -2,11 +2,35 @@
 # Installer for the macOS menubar proxy switcher.
 # Lays everything down in ~/.proxy-relay, sets up a LaunchAgent (autostart at
 # login), seeds config.json, and adds convenience aliases to ~/.zshrc.
+#
+#   ./install.sh              # interactive: asks for the relay port
+#   ./install.sh --port 12345 # non-interactive
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$HOME/.proxy-relay"
 LABEL="com.proxyrelay.menubar"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DEFAULT_PORT=17872
+
+# --- 0. Args ---------------------------------------------------------------- #
+ARG_PORT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) ARG_PORT="$2"; shift 2 ;;
+    --port=*) ARG_PORT="${1#*=}"; shift ;;
+    -h|--help)
+      echo "Usage: ./install.sh [--port N]"
+      exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+valid_port() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1024 ] && [ "$1" -le 65535 ]
+}
 
 echo "==> Installing menubar proxy switcher into $APP_DIR"
 
@@ -48,7 +72,51 @@ if [ ! -f "$APP_DIR/config.json" ]; then
   SEEDED=1
 fi
 
-# --- 4. venv + rumps -------------------------------------------------------- #
+# --- 4. Choose the relay port ----------------------------------------------- #
+# Default to the port already in config.json (so re-running never surprises an
+# existing install), otherwise to DEFAULT_PORT.
+CURRENT_PORT="$("$PY" -c "import json;print(json.load(open('$APP_DIR/config.json')).get('listen_port', $DEFAULT_PORT))" 2>/dev/null)"
+valid_port "$CURRENT_PORT" || CURRENT_PORT="$DEFAULT_PORT"
+
+if [ -n "$ARG_PORT" ]; then
+  if valid_port "$ARG_PORT"; then
+    PORT="$ARG_PORT"
+  else
+    echo "ERROR: --port must be a number between 1024 and 65535" >&2
+    exit 1
+  fi
+elif [ -t 0 ]; then
+  echo
+  echo "The relay listens on 127.0.0.1:<port>. Clients point at this address once;"
+  echo "you then switch upstream proxies from the menubar without touching them."
+  while true; do
+    printf "Relay port [%s]: " "$CURRENT_PORT"
+    read -r ans
+    if [ -z "$ans" ]; then PORT="$CURRENT_PORT"; break; fi
+    if valid_port "$ans"; then PORT="$ans"; break; fi
+    echo "  Please enter a number between 1024 and 65535 (or press Enter for $CURRENT_PORT)."
+  done
+  echo
+else
+  PORT="$CURRENT_PORT"
+fi
+
+# Warn if the port is taken by something that isn't our own agent.
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "!!  Note: something is already listening on port $PORT."
+  echo "    If that's a previous version of this relay, it will be replaced below."
+fi
+
+"$PY" - "$APP_DIR/config.json" "$PORT" <<'PYEOF'
+import json, sys
+path, port = sys.argv[1], int(sys.argv[2])
+cfg = json.load(open(path))
+cfg["listen_port"] = port
+json.dump(cfg, open(path, "w"), indent=2)
+PYEOF
+echo "==> Relay port: $PORT"
+
+# --- 5. venv + rumps -------------------------------------------------------- #
 if [ ! -x "$APP_DIR/.venv/bin/python" ]; then
   echo "==> Creating virtualenv"
   "$PY" -m venv "$APP_DIR/.venv" || { echo "venv creation failed" >&2; exit 1; }
@@ -58,13 +126,12 @@ echo "==> Installing rumps (menubar library)"
 "$APP_DIR/.venv/bin/pip" install --quiet rumps || { echo "pip install rumps failed" >&2; exit 1; }
 
 VPY="$APP_DIR/.venv/bin/python"
-PORT="$("$VPY" -c "import json;print(json.load(open('$APP_DIR/config.json')).get('listen_port',13546))")"
 SYMBOL="$("$VPY" -c "import json;print((json.load(open('$APP_DIR/config.json')).get('icon') or {}).get('symbol','shuffle'))")"
 
-# --- 5. Seed the menubar icon PNG ------------------------------------------- #
+# --- 6. Seed the menubar icon PNG ------------------------------------------- #
 "$VPY" "$APP_DIR/make_icon.py" "$SYMBOL" >/dev/null 2>&1 || true
 
-# --- 6. LaunchAgent (autostart at login) ------------------------------------ #
+# --- 7. LaunchAgent (autostart at login) ------------------------------------ #
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -90,7 +157,7 @@ echo "==> Loading LaunchAgent"
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
 launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
 
-# --- 7. Desktop-app launcher (Claude.app via Chromium --proxy-server) ------- #
+# --- 8. Desktop-app launcher (Claude.app via Chromium --proxy-server) ------- #
 cat > "$APP_DIR/claude-desktop.command" <<CMDEOF
 #!/bin/zsh
 # Launch the Claude desktop app routed through the relay. Must be launched this
@@ -104,25 +171,44 @@ echo "Launched Claude via relay on port $PORT"
 CMDEOF
 chmod +x "$APP_DIR/claude-desktop.command"
 
-# --- 8. Shell aliases (guarded) --------------------------------------------- #
+# --- 9. Shell aliases (guarded, rewritten on re-install) -------------------- #
 RC="$HOME/.zshrc"
 MARK_START="# >>> menubar-proxy-switcher >>>"
-if ! grep -qF "$MARK_START" "$RC" 2>/dev/null; then
-  cat >> "$RC" <<RCEOF
+MARK_END="# <<< menubar-proxy-switcher <<<"
+if grep -qF "$MARK_START" "$RC" 2>/dev/null; then
+  # Drop the old block so the port stays in sync on re-install.
+  "$PY" - "$RC" "$MARK_START" "$MARK_END" <<'PYEOF'
+import sys
+path, start, end = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(path).read().splitlines(True)
+out, skip = [], False
+for ln in lines:
+    if ln.strip() == start:
+        skip = True
+        continue
+    if ln.strip() == end:
+        skip = False
+        continue
+    if not skip:
+        out.append(ln)
+open(path, "w").writelines(out)
+PYEOF
+  echo "==> Refreshed alias block in $RC"
+else
+  echo "==> Added 'claude' and 'claude-app' aliases to $RC"
+fi
+
+cat >> "$RC" <<RCEOF
 
 $MARK_START
 # Route the Claude CLI through the local relay (switch upstream in the menubar):
 alias claude='HTTPS_PROXY="http://127.0.0.1:$PORT" HTTP_PROXY="http://127.0.0.1:$PORT" https_proxy="http://127.0.0.1:$PORT" http_proxy="http://127.0.0.1:$PORT" claude'
 # Launch the Claude desktop app through the relay:
 alias claude-app='\$HOME/.proxy-relay/claude-desktop.command'
-# <<< menubar-proxy-switcher <<<
+$MARK_END
 RCEOF
-  echo "==> Added 'claude' and 'claude-app' aliases to $RC"
-else
-  echo "==> Aliases already present in $RC (skipped)"
-fi
 
-# --- 9. Verify -------------------------------------------------------------- #
+# --- 10. Verify ------------------------------------------------------------- #
 sleep 2
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "==> Relay is running and listening on 127.0.0.1:$PORT ✓"

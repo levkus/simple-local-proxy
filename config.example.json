@@ -1,7 +1,7 @@
 {
   "_comment": "Copy this file to config.json (install.sh does it for you) and put your REAL proxies below. config.json is gitignored — never commit credentials.",
   "listen_host": "127.0.0.1",
-  "listen_port": 13546,
+  "listen_port": 17872,
   "active": "direct",
   "icon": {
     "_comment": "Any SF Symbol name. Run make_icon.py with no args to render a palette of candidates. point 15-18, weight regular/medium.",

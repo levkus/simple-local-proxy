@@ -4,14 +4,14 @@ A tiny local proxy relay with a menubar icon that lets you **switch between
 upstream proxies with a click** — no restarting the app that's using the proxy.
 
 ```
-  your app  ──►  relay (127.0.0.1:13546)  ──►  upstream selected in the menubar
+  your app  ──►  relay (127.0.0.1:17872)  ──►  upstream selected in the menubar
  (CLI / GUI)      always the same address        work / backup / direct / …
 ```
 
 You point a client at the relay **once** (a fixed local address). The relay
 tunnels each new connection through whichever upstream you've picked in the
 menubar. Flip the upstream in the menu and the client keeps talking to the same
-`127.0.0.1:13546` — only *new* connections use the new upstream. Nothing to
+`127.0.0.1:17872` — only *new* connections use the new upstream. Nothing to
 restart.
 
 Built for pointing the Claude CLI and the Claude desktop app at a switchable
@@ -35,12 +35,21 @@ cd mac-proxy-switcher
 ./install.sh
 ```
 
+The installer asks which port the relay should listen on (default **17872**;
+press Enter to accept). Re-running it later defaults to the port already in your
+config, so upgrades never move the port behind your back. For scripted installs:
+
+```sh
+./install.sh --port 12345
+```
+
 The installer:
 - copies the app into `~/.proxy-relay/` and builds a venv with `rumps`,
 - seeds `~/.proxy-relay/config.json` from `config.example.json`,
 - installs a **LaunchAgent** so it starts automatically at every login,
 - generates the menubar icon,
-- adds `claude` and `claude-app` aliases to `~/.zshrc`.
+- adds `claude` and `claude-app` aliases to `~/.zshrc` (rewritten on re-install
+  so the port stays in sync).
 
 Then put your real proxies in `~/.proxy-relay/config.json` (or menubar →
 **Edit list…**) and hit menubar → **Reload config**.
@@ -54,7 +63,7 @@ Then put your real proxies in `~/.proxy-relay/config.json` (or menubar →
 ```json
 {
   "listen_host": "127.0.0.1",
-  "listen_port": 13546,
+  "listen_port": 17872,
   "active": "work-https",
   "icon": { "symbol": "shuffle", "point": 16, "weight": "regular" },
   "proxies": [
@@ -73,9 +82,10 @@ Upstream `url` forms:
 | `http://user:pass@host:port`  | Plain HTTP proxy. |
 | `""` (empty)                  | Direct — no upstream, connect straight out. |
 
-`listen_port` is configurable; the aliases and the desktop launcher are
-generated from it at install time. If you change the port later, re-run
-`./install.sh` (it's idempotent) so they stay in sync.
+`listen_port` is chosen during install (default 17872). The aliases and the
+desktop launcher are generated from it. To change it later, re-run
+`./install.sh` and enter the new port — it rewrites the alias block, the
+launcher and the LaunchAgent to match.
 
 ## Use it
 
@@ -100,13 +110,13 @@ drag `~/.proxy-relay/claude-desktop.command` into the Dock and use that.
 
 **Verify** which exit you're on:
 ```sh
-curl -sS -x http://127.0.0.1:13546 https://api.ipify.org   # exit IP for the active upstream
-lsof -nP -iTCP:13546 -sTCP:ESTABLISHED                     # live connections through the relay
+curl -sS -x http://127.0.0.1:17872 https://api.ipify.org   # exit IP for the active upstream
+lsof -nP -iTCP:17872 -sTCP:ESTABLISHED                     # live connections through the relay
 ```
 
 **Route everything (optional):** instead of per-app config, set a system proxy
 in *System Settings → Network → … → Proxies → Web/Secure Web Proxy* to
-`127.0.0.1 : 13546`. Then all system-proxy-aware apps use the relay.
+`127.0.0.1 : 17872`. Then all system-proxy-aware apps use the relay.
 
 ## Icon
 
@@ -131,11 +141,17 @@ launchctl print     gui/$(id -u)/com.proxyrelay.menubar | grep 'state ='
 
 ## Uninstall
 
+`./uninstall.sh` reverts everything the installer did: stops and removes the
+LaunchAgent, strips the alias block from `~/.zshrc` (keeping a timestamped
+backup), and removes `~/.proxy-relay`.
+
 ```sh
-./uninstall.sh
-# then optionally: rm -rf ~/.proxy-relay
-# and remove the alias block in ~/.zshrc between the "menubar-proxy-switcher" markers
+./uninstall.sh                # asks before deleting the config with your credentials
+./uninstall.sh --yes          # no prompts, remove everything
+./uninstall.sh --keep-config  # remove everything but keep config.json
 ```
+
+Homebrew Python, if the installer installed it, is left in place.
 
 ## Troubleshooting
 
@@ -144,8 +160,8 @@ launchctl print     gui/$(id -u)/com.proxyrelay.menubar | grep 'state ='
   `./install.sh`.
 - **No menubar icon** — check `~/.proxy-relay/relay.log`; make sure the login
   session is a GUI (Aqua) session.
-- **Port already in use** — something else holds `13546`
-  (`lsof -nP -iTCP:13546 -sTCP:LISTEN`). Change `listen_port` and re-run install.
+- **Port already in use** — something else holds `17872`
+  (`lsof -nP -iTCP:17872 -sTCP:LISTEN`). Change `listen_port` and re-run install.
 - **Desktop Claude ignores the proxy** — it was opened from the Dock. Quit it
   and launch via `claude-app`.
 - **TLS error to an HTTPS proxy** — self-signed cert; add `"insecure": true` to

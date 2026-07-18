@@ -2,7 +2,7 @@
 """Local proxy relay with a macOS menubar switcher.
 
 Clients point HTTP(S)_PROXY at this relay on 127.0.0.1:<listen_port> (default
-13546). The relay tunnels each new connection through whichever upstream proxy
+17872). The relay tunnels each new connection through whichever upstream proxy
 is currently selected in the menubar. Switching the upstream never touches the
 client -- it keeps talking to the relay the whole time; only *new* connections
 use the newly selected upstream.
@@ -32,7 +32,7 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 DEFAULT_CONFIG = {
     "listen_host": "127.0.0.1",
-    "listen_port": 13546,
+    "listen_port": 17872,
     "active": "direct",
     "proxies": [
         {"name": "direct", "url": ""},
