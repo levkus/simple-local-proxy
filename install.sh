@@ -102,7 +102,7 @@ except Exception as exc:
     sys.stderr.write(f"ERROR: {path} is not valid JSON: {exc}\n")
     raise SystemExit(2)
 print(cfg.get("listen_port", ""))
-print((cfg.get("icon") or {}).get("symbol", "shuffle"))
+print((cfg.get("icon") or {}).get("symbol", "globe"))
 PYEOF
 )"; then
   echo "Fix $APP_DIR/config.json and re-run this script." >&2

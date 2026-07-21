@@ -13,10 +13,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ICON = os.path.join(HERE, "icon.png")
 
 # Menu bar icon defaults. Overridable via an "icon" block in config.json:
-#   "icon": {"symbol": "shuffle", "point": 16, "weight": "regular"}
+#   "icon": {"symbol": "globe", "point": 16, "weight": "regular"}
 # Rendered as a native SF Symbol on the status item (matches system items) rather
 # than a PNG, which rumps would otherwise squash to a tiny 20x20pt bitmap.
-DEFAULT_ICON = {"symbol": "shuffle", "point": 16, "weight": "regular"}
+DEFAULT_ICON = {"symbol": "globe", "point": 16, "weight": "regular"}
 _WEIGHTS = {
     "ultralight": AppKit.NSFontWeightUltraLight,
     "thin": AppKit.NSFontWeightThin,
@@ -30,7 +30,7 @@ _WEIGHTS = {
 
 def _symbol_image(spec):
     img = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-        spec.get("symbol", "shuffle"), None
+        spec.get("symbol", "globe"), None
     )
     if img is None:
         return None

@@ -67,7 +67,7 @@ Then put your real proxies in `~/.proxy-relay/config.json` (or menubar →
   "listen_host": "127.0.0.1",
   "listen_port": 17872,
   "active": "work-https",
-  "icon": { "symbol": "shuffle", "point": 16, "weight": "regular" },
+  "icon": { "symbol": "globe", "point": 16, "weight": "regular" },
   "proxies": [
     { "name": "work-https", "url": "https://user:pass@proxy.example.com:8443" },
     { "name": "work-http",  "url": "http://user:pass@proxy.example.com:8080" },

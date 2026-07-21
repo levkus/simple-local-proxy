@@ -5,7 +5,7 @@
   "active": "direct",
   "icon": {
     "_comment": "Any SF Symbol name. Run make_icon.py with no args to render a palette of candidates. point 15-18, weight regular/medium.",
-    "symbol": "shuffle",
+    "symbol": "globe",
     "point": 16,
     "weight": "regular"
   },
