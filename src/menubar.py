@@ -149,6 +149,11 @@ class RelayApp(rumps.App):
 if __name__ == "__main__":
     from proxy_relay import ensure_config, start_server
 
+    # Accessory = LSUIElement: menubar icon only, no Dock icon.
+    AppKit.NSApplication.sharedApplication().setActivationPolicy_(
+        AppKit.NSApplicationActivationPolicyAccessory
+    )
+
     ensure_config()
     STATE.load()
     start_server(STATE)
