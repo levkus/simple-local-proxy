@@ -3,10 +3,12 @@
 
 import os
 import subprocess
+import threading
 
 import AppKit
 import rumps
 
+import health
 from proxy_relay import STATE, ProxyConfigError, parse_upstream
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +19,10 @@ ICON = os.path.join(HERE, "icon.png")
 # Rendered as a native SF Symbol on the status item (matches system items) rather
 # than a PNG, which rumps would otherwise squash to a tiny 20x20pt bitmap.
 DEFAULT_ICON = {"symbol": "globe", "point": 16, "weight": "regular"}
+
+# Health marks. The checkmark column is taken by the active-proxy state, so the
+# verdict rides in the title instead.
+MARKS = {"ok": "✓", "warn": "!", "fail": "✗"}
 _WEIGHTS = {
     "ultralight": AppKit.NSFontWeightUltraLight,
     "thin": AppKit.NSFontWeightThin,
@@ -53,6 +59,9 @@ class RelayApp(rumps.App):
             kwargs["icon"] = ICON
             kwargs["template"] = True
         super().__init__("ProxyRelay", **kwargs)
+        self._health = {}          # name -> health.Result, from the last check
+        self._checking = False
+        self._results = None       # handoff slot: worker thread -> main thread
         self._rebuild()
         # The status item only exists once the app is running, so install the
         # real icon from a one-shot timer just after launch.
@@ -80,12 +89,21 @@ class RelayApp(rumps.App):
         header = rumps.MenuItem(f"Active: {active or 'none'}")  # no callback = greyed label
         items = [header, rumps.separator]
         for p in config.get("proxies", []):
-            label = p["name"]
-            item = rumps.MenuItem(label, callback=self._select)
-            item.state = 1 if label == active else 0
+            name = p["name"]
+            item = rumps.MenuItem(
+                self._proxy_title(name),
+                # The title carries the health verdict, so it can't identify the
+                # entry any more — bind the name instead.
+                callback=lambda _sender, name=name: self._select(name),
+            )
+            item.state = 1 if name == active else 0
             items.append(item)
         items += [
             rumps.separator,
+            rumps.MenuItem(
+                "Checking…" if self._checking else "Check connection",
+                callback=None if self._checking else self._check,
+            ),
             rumps.MenuItem("Add proxy…", callback=self._add),
             rumps.MenuItem("Edit list…", callback=self._edit),
             rumps.MenuItem("Reload config", callback=self._reload),
@@ -95,9 +113,38 @@ class RelayApp(rumps.App):
         self.menu.clear()
         self.menu = items
 
+    def _proxy_title(self, name):
+        res = self._health.get(name)
+        if res is None:
+            return name
+        return f"{name}   {MARKS.get(res.status, '?')} {res.detail}"
+
     # ----- callbacks --------------------------------------------------- #
-    def _select(self, sender):
-        STATE.set_active(sender.title)
+    def _select(self, name):
+        STATE.set_active(name)
+        self._rebuild()
+
+    def _check(self, _):
+        """Probe every upstream off the main thread, then repaint the menu."""
+        proxies = STATE.snapshot().get("proxies", [])
+        self._checking = True
+        self._health = {}
+        self._rebuild()
+
+        def worker():
+            self._results = health.check_all(proxies)
+
+        threading.Thread(target=worker, daemon=True).start()
+        # AppKit is not thread-safe: the worker only parks its results, the
+        # timer picks them up on the main thread.
+        rumps.Timer(self._collect, 0.3).start()
+
+    def _collect(self, sender):
+        if self._results is None:
+            return
+        sender.stop()
+        self._health, self._results = self._results, None
+        self._checking = False
         self._rebuild()
 
     def _add(self, _):
