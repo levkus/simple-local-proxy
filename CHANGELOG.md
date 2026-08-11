@@ -32,6 +32,12 @@
   the LaunchAgent pointing at an interpreter that no longer exists. `--install`
   also repoints the LaunchAgent at the bundle. `config.json` keeps living in
   `~/.proxy-relay`, since a signed bundle can't be written to.
+- **`packaging/make-dmg.sh`** packages the bundle into a drag-to-install disk
+  image for handing to other people. Ad-hoc by default, with a note in the image
+  explaining the Gatekeeper warning that unsigned downloads get; set
+  `CODESIGN_IDENTITY` and `NOTARY_PROFILE` to sign and notarise instead, which
+  removes the warning entirely. Images are per-architecture and named
+  accordingly — a build only runs on the architecture it was built for.
 - Read timeout and a 64 KB header cap, so an idle or malicious connection can no
   longer pin a thread forever or grow the buffer without bound.
 - The relay refuses to bind a non-loopback address unless `"allow_remote": true`

@@ -163,6 +163,42 @@ your own machine, not notarised for distribution.
 `config.json` and the icon are still read from `~/.proxy-relay` — a signed
 bundle is read-only, and writing inside it would break the signature.
 
+### Handing it to someone else
+
+```sh
+./packaging/make-dmg.sh      # -> dist/ProxyRelay-<arch>.dmg
+```
+
+A drag-to-install disk image: the bundle, an `Applications` symlink, the
+licence, and — for unsigned builds — a note explaining the Gatekeeper warning.
+
+**The bundle is architecture-specific.** It is built for the machine that builds
+it, so an `arm64` image will not run on an Intel Mac. Build on each
+architecture you need to support; the filename carries the arch so the two
+images don't collide.
+
+**Signing decides how the image lands.** By default it is ad-hoc signed, which
+is enough for your own machine but not for a download: macOS quarantines it and
+reports *"ProxyRelay is damaged and can't be opened"* — misleading, since
+nothing is damaged, it just isn't signed with a paid Apple certificate. The
+recipient has to clear the flag themselves:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ProxyRelay.app
+```
+
+With an Apple Developer account you can skip that entirely:
+
+```sh
+CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" \
+NOTARY_PROFILE=my-notary-profile \
+    ./packaging/make-dmg.sh
+```
+
+That signs with a hardened runtime, submits to Apple's notary service, and
+staples the ticket — the image then opens with a double click, no warnings.
+Store the profile once with `xcrun notarytool store-credentials`.
+
 ## Autostart & manual control
 
 It starts at login automatically (LaunchAgent). Manual control:
