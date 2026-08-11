@@ -139,6 +139,30 @@ browse options, render a palette:
 ~/.proxy-relay/.venv/bin/python ~/.proxy-relay/make_icon.py network   # set icon.png from a specific symbol
 ```
 
+## Build it as an app (optional)
+
+The LaunchAgent runs `.venv/bin/python`, so the relay is only as durable as the
+Python it was installed against. On a managed Mac that Python can disappear —
+a cleanup policy wiping `/opt/homebrew` takes brew's Python with it — and the
+relay then fails to start at the next login, silently, right when you need it.
+
+`packaging/build-app.sh` builds a self-contained `ProxyRelay.app` with its own
+Python inside:
+
+```sh
+./packaging/build-app.sh             # build + ad-hoc sign into dist/
+./packaging/build-app.sh --install   # also install to ~/Applications and
+                                     # repoint the LaunchAgent at the bundle
+```
+
+Requires [uv](https://docs.astral.sh/uv/), which supplies the build Python and a
+throwaway environment — your runtime venv is left alone. The result is ~23 MB,
+`LSUIElement` (menubar only, no Dock tile), and ad-hoc signed: good enough for
+your own machine, not notarised for distribution.
+
+`config.json` and the icon are still read from `~/.proxy-relay` — a signed
+bundle is read-only, and writing inside it would break the signature.
+
 ## Autostart & manual control
 
 It starts at login automatically (LaunchAgent). Manual control:

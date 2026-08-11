@@ -9,6 +9,7 @@ import base64
 import json
 import os
 import socket
+import sys
 import tempfile
 import unittest
 
@@ -297,6 +298,24 @@ class TestExampleConfig(unittest.TestCase):
                 self.assertEqual(
                     up["pw"], "PASSWORD",
                     "config.example.json must use a placeholder password")
+
+
+class TestDefaultAppDir(unittest.TestCase):
+    """Where the config is looked for, running from source vs from a bundle."""
+
+    def test_source_checkout_keeps_the_config_next_to_the_script(self):
+        self.assertEqual(
+            proxy_relay.default_app_dir(),
+            os.path.dirname(os.path.abspath(proxy_relay.__file__)),
+        )
+
+    def test_frozen_bundle_writes_outside_itself(self):
+        """A signed .app is read-only; writing the config inside would break it."""
+        sys.frozen = True  # what PyInstaller sets at runtime
+        self.addCleanup(lambda: delattr(sys, "frozen"))
+        self.assertEqual(
+            proxy_relay.default_app_dir(), os.path.expanduser("~/.proxy-relay")
+        )
 
 
 if __name__ == "__main__":

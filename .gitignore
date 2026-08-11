@@ -13,5 +13,9 @@ preview.png
 bar*.png
 *.log
 
+# Bundle build artefacts
+build/
+dist/
+
 # macOS
 .DS_Store

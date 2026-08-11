@@ -26,6 +26,12 @@
 
 ### Added
 
+- **`packaging/build-app.sh`** builds a self-contained `ProxyRelay.app` with its
+  own Python inside, so the relay survives losing the Python it was installed
+  against — a managed Mac can lose Homebrew, and with it brew's Python, leaving
+  the LaunchAgent pointing at an interpreter that no longer exists. `--install`
+  also repoints the LaunchAgent at the bundle. `config.json` keeps living in
+  `~/.proxy-relay`, since a signed bundle can't be written to.
 - Read timeout and a 64 KB header cap, so an idle or malicious connection can no
   longer pin a thread forever or grow the buffer without bound.
 - The relay refuses to bind a non-loopback address unless `"allow_remote": true`

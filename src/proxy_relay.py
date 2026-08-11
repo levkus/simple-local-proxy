@@ -27,8 +27,20 @@ import sys
 import threading
 import urllib.parse
 
-# Config lives next to this script, or wherever PROXY_RELAY_HOME points.
-APP_DIR = os.environ.get("PROXY_RELAY_HOME") or os.path.dirname(os.path.abspath(__file__))
+
+def default_app_dir():
+    """Where config.json lives when PROXY_RELAY_HOME doesn't say otherwise.
+
+    Next to this script normally. A frozen .app bundle is read-only and
+    code-signed, so writing the config inside it would fail and break the
+    signature — those fall back to the installer's directory.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.expanduser("~/.proxy-relay")
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+APP_DIR = os.environ.get("PROXY_RELAY_HOME") or default_app_dir()
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 DEFAULT_CONFIG = {
