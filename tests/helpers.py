@@ -140,7 +140,7 @@ class Origin:
     being delivered to the wrong host.
     """
 
-    def __init__(self, label=b"", host="127.0.0.1", delay=0.0):
+    def __init__(self, label=b"", host="127.0.0.1", delay=0.0, status=200):
         body = ORIGIN_BODY + (b"-" + label if label else b"")
 
         class _Handler(BaseHTTPRequestHandler):
@@ -149,7 +149,7 @@ class Origin:
             def do_GET(self):  # noqa: N802
                 if delay:
                     threading.Event().wait(delay)
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Length", str(len(body)))
                 # Honour the client's wish to close; otherwise keep alive.
                 if self.headers.get("Connection", "").lower() == "close":

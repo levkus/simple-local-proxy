@@ -231,9 +231,9 @@ def _auth_header(up):
     return f"Proxy-Authorization: Basic {token}\r\n".encode()
 
 
-def open_upstream_tunnel(up, host, port, insecure):
+def open_upstream_tunnel(up, host, port, insecure, timeout=CONNECT_TIMEOUT):
     """CONNECT to host:port through the upstream proxy. Returns (sock, leftover)."""
-    sock = socket.create_connection((up["host"], up["port"]), timeout=CONNECT_TIMEOUT)
+    sock = socket.create_connection((up["host"], up["port"]), timeout=timeout)
     try:
         if up["scheme"] == "https":
             sock = _wrap_tls(sock, up["host"], insecure)
