@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Check connection reported every `https://` upstream as a TLS error**, even
+  a working one. The probe raised its TLS session with `wrap_socket()`, which
+  re-wraps the raw file descriptor; over the `SSLSocket` of an `https://` proxy
+  that sends the inner handshake around the outer session instead of through
+  it. The inner session now runs over a memory BIO.
 - **Requests on a pooled connection could be answered by the wrong origin.**
   The non-CONNECT path parsed only the first request line and then spliced raw
   bytes, so a client reusing one proxy connection for a second host had that
