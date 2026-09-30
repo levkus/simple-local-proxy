@@ -55,10 +55,69 @@ def _short_error(exc):
     return text[:40]
 
 
+class _InnerTLS:
+    """A TLS session spoken *through* an already-TLS socket.
+
+    `wrap_socket` re-wraps the raw file descriptor, so layering it over an
+    SSLSocket sends the inner handshake around the outer session instead of
+    inside it — the peer sees garbage and answers UNEXPECTED_MESSAGE. That is
+    exactly the shape of an `https://` upstream: TLS to the proxy, then TLS to
+    the destination within the tunnel. A memory BIO hands us the handshake bytes
+    so we can push them through the outer socket ourselves.
+
+    Only what the probe needs: a request out, a status line back.
+    """
+
+    def __init__(self, sock, host):
+        self._sock = sock
+        self._incoming, self._outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+        self._tls = ssl.create_default_context().wrap_bio(
+            self._incoming, self._outgoing, server_hostname=host
+        )
+        self._pump(self._tls.do_handshake)
+
+    def _pump(self, step):
+        """Run one TLS operation, ferrying bytes through the outer socket."""
+        while True:
+            try:
+                result = step()
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                self._flush()
+                chunk = self._sock.recv(65536)
+                if chunk:
+                    self._incoming.write(chunk)
+                else:
+                    self._incoming.write_eof()
+                continue
+            self._flush()
+            return result
+
+    def _flush(self):
+        pending = self._outgoing.read()
+        if pending:
+            self._sock.sendall(pending)
+
+    def sendall(self, data):
+        self._pump(lambda: self._tls.write(data))
+
+    def recv(self, size):
+        try:
+            return self._pump(lambda: self._tls.read(size))
+        except ssl.SSLZeroReturnError:
+            return b""
+
+    def settimeout(self, timeout):
+        self._sock.settimeout(timeout)
+
+
 def _probe(sock, host, use_tls):
     """Send one request down an open tunnel and return the HTTP status code."""
     if use_tls:
-        sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+        sock = (
+            _InnerTLS(sock, host)
+            if isinstance(sock, ssl.SSLSocket)
+            else ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+        )
     sock.sendall(
         f"GET {CHECK_PATH} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode()
     )

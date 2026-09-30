@@ -1,16 +1,21 @@
 """Tests for the upstream connectivity check behind the menubar's Check connection.
 
 Hermetic: every probe targets a throwaway Origin on loopback, never the real
-CHECK_HOST. TLS is off for these because the fake origins speak plain HTTP —
-the TLS path is already covered by the relay's own suite.
+CHECK_HOST. Most cases run the probe without TLS — the fake origins speak plain
+HTTP, and the transport is the same. TestTlsProbe covers the one case where it
+is not: an `https://` upstream, where the probe's own TLS has to ride inside the
+TLS already spoken to the proxy.
 """
 
 import os
 import socket
+import ssl
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
-from helpers import FakeUpstream, Origin
+from helpers import FakeUpstream, Origin, make_self_signed, openssl_available
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -100,6 +105,52 @@ class TestRefusedDestination(HealthTestCase):
         self.addCleanup(origin.stop)
         res = self.check({"name": "direct", "url": ""}, origin)
         self.assertEqual(res.status, "ok")
+
+
+@unittest.skipUnless(openssl_available(), "needs openssl to mint a throwaway cert")
+class TestTlsProbe(unittest.TestCase):
+    """An `https://` upstream means two TLS layers: to the proxy, then inside the
+    tunnel to the destination. The inner one cannot be a plain wrap_socket() of
+    the outer SSLSocket, so this is the case that catches getting it wrong."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cert = make_self_signed(tmp.name)
+        # The probe's inner context has to trust a throwaway cert on an IP, which
+        # a default context never will — that check is not what these test.
+        unverified = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        unverified.check_hostname = False
+        unverified.verify_mode = ssl.CERT_NONE
+        patch = mock.patch.object(health.ssl, "create_default_context", lambda: unverified)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_https_upstream_reaches_a_tls_destination(self):
+        origin = Origin(tls_cert=self.cert)
+        self.addCleanup(origin.stop)
+        up = FakeUpstream(tls_cert=self.cert)
+        self.addCleanup(up.stop)
+        res = health.check_entry(
+            {"name": "tls-proxy", "url": f"https://127.0.0.1:{up.port}", "insecure": True},
+            target=(origin.host, origin.port),
+            use_tls=True,
+            timeout=5,
+        )
+        self.assertEqual(res.status, "ok", f"expected a working upstream, got {res.detail!r}")
+
+    def test_http_upstream_reaches_a_tls_destination(self):
+        origin = Origin(tls_cert=self.cert)
+        self.addCleanup(origin.stop)
+        up = FakeUpstream()
+        self.addCleanup(up.stop)
+        res = health.check_entry(
+            {"name": "plain-proxy", "url": f"http://127.0.0.1:{up.port}"},
+            target=(origin.host, origin.port),
+            use_tls=True,
+            timeout=5,
+        )
+        self.assertEqual(res.status, "ok", f"expected a working upstream, got {res.detail!r}")
 
 
 class TestCheckAll(HealthTestCase):

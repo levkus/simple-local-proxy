@@ -140,7 +140,7 @@ class Origin:
     being delivered to the wrong host.
     """
 
-    def __init__(self, label=b"", host="127.0.0.1", delay=0.0, status=200):
+    def __init__(self, label=b"", host="127.0.0.1", delay=0.0, status=200, tls_cert=None):
         body = ORIGIN_BODY + (b"-" + label if label else b"")
 
         class _Handler(BaseHTTPRequestHandler):
@@ -170,6 +170,10 @@ class Origin:
 
         self.body = body
         self.server = server_cls((host, 0), _Handler)
+        if tls_cert:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(tls_cert[0], tls_cert[1])
+            self.server.socket = ctx.wrap_socket(self.server.socket, server_side=True)
         self.host = host
         self.port = self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
