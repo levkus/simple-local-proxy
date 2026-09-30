@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Check connection reported every `https://` upstream as a TLS error**, even
+  a working one. The probe raised its TLS session with `wrap_socket()`, which
+  re-wraps the raw file descriptor; over the `SSLSocket` of an `https://` proxy
+  that sends the inner handshake around the outer session instead of through
+  it. The inner session now runs over a memory BIO.
 - **Requests on a pooled connection could be answered by the wrong origin.**
   The non-CONNECT path parsed only the first request line and then spliced raw
   bytes, so a client reusing one proxy connection for a second host had that
@@ -38,6 +43,13 @@
   `CODESIGN_IDENTITY` and `NOTARY_PROFILE` to sign and notarise instead, which
   removes the warning entirely. Images are per-architecture and named
   accordingly — a build only runs on the architecture it was built for.
+- **Check connection** in the menubar: probes every configured upstream in
+  parallel and marks each one in place — `✓` with the round-trip time, `!` when
+  the tunnel opens but the destination refuses that exit IP (a geo-block reads
+  very differently from a dead proxy), `✗` with a short reason otherwise. The
+  probe is the whole round trip the relay would make, not a TCP connect, so an
+  upstream that accepts connections and then leads nowhere is not reported as
+  healthy.
 - Read timeout and a 64 KB header cap, so an idle or malicious connection can no
   longer pin a thread forever or grow the buffer without bound.
 - The relay refuses to bind a non-loopback address unless `"allow_remote": true`

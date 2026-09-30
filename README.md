@@ -101,9 +101,24 @@ launcher and the LaunchAgent to match.
 
 **Menubar** — click the icon:
 - pick a proxy (checkmark = active; `Active: …` shows the current one),
+- **Check connection** — probe every upstream and mark the results,
 - **Add proxy…** — quick `name = url` entry,
 - **Edit list…** — open `config.json`,
 - **Reload config** — re-read the file (also re-applies the icon).
+
+**Check connection** answers what the menu otherwise can't: does this proxy work
+*right now?* Each entry gets the full round trip — open the tunnel, speak TLS to
+`api.anthropic.com` through it, read a real HTTP status back — so a proxy that
+accepts connections and then leads nowhere is not mistaken for a working one.
+Every entry is probed in parallel; verdicts land next to the names:
+
+| Mark | Meaning |
+|------|---------|
+| `✓ 351 ms` | tunnel opened, destination answered — usable |
+| `! HTTP 403` | tunnel opened, destination refused this exit IP (geo-block) — the proxy is alive, it just doesn't get you in |
+| `✗ timeout` | no usable tunnel (also: `refused`, `bad URL`, a rejected `CONNECT`) |
+
+The marks are from the last check, not live — re-run it after switching networks.
 
 **Claude CLI** — the `claude` alias sets `HTTP(S)_PROXY` to the relay:
 ```sh
@@ -236,6 +251,13 @@ Homebrew Python, if the installer installed it, is left in place.
   and launch via `claude-app`.
 - **TLS error to an HTTPS proxy** — self-signed cert; add `"insecure": true` to
   that proxy entry.
+- **Every upstream fails, but the hosts are definitely up** — check for a VPN
+  client in TUN mode (Happ/xray, sing-box, and friends). It captures *all*
+  outbound TCP, so your proxies are reached from its exit node instead of your
+  machine, and the handshakes time out. The giveaway: a connection to a port
+  nothing listens on still "succeeds" —
+  `python3 -c "import socket; socket.create_connection(('192.0.2.1', 9999), timeout=5)"`
+  returns instead of timing out. Turn the tunnel off and check again.
 
 ## How it works
 
