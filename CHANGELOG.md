@@ -31,6 +31,18 @@
 
 ### Added
 
+- **`packaging/build-app.sh`** builds a self-contained `ProxyRelay.app` with its
+  own Python inside, so the relay survives losing the Python it was installed
+  against — a managed Mac can lose Homebrew, and with it brew's Python, leaving
+  the LaunchAgent pointing at an interpreter that no longer exists. `--install`
+  also repoints the LaunchAgent at the bundle. `config.json` keeps living in
+  `~/.proxy-relay`, since a signed bundle can't be written to.
+- **`packaging/make-dmg.sh`** packages the bundle into a drag-to-install disk
+  image for handing to other people. Ad-hoc by default, with a note in the image
+  explaining the Gatekeeper warning that unsigned downloads get; set
+  `CODESIGN_IDENTITY` and `NOTARY_PROFILE` to sign and notarise instead, which
+  removes the warning entirely. Images are per-architecture and named
+  accordingly — a build only runs on the architecture it was built for.
 - **Check connection** in the menubar: probes every configured upstream in
   parallel and marks each one in place — `✓` with the round-trip time, `!` when
   the tunnel opens but the destination refuses that exit IP (a geo-block reads

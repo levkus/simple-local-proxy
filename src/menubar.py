@@ -3,6 +3,7 @@
 
 import os
 import subprocess
+import sys
 import threading
 
 import AppKit
@@ -11,7 +12,8 @@ import rumps
 import health
 from proxy_relay import STATE, ProxyConfigError, parse_upstream
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# Bundled resources live in the unpacked bundle, not next to the source file.
+HERE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 ICON = os.path.join(HERE, "icon.png")
 
 # Menu bar icon defaults. Overridable via an "icon" block in config.json:

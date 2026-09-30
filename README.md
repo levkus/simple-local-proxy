@@ -154,6 +154,66 @@ browse options, render a palette:
 ~/.proxy-relay/.venv/bin/python ~/.proxy-relay/make_icon.py network   # set icon.png from a specific symbol
 ```
 
+## Build it as an app (optional)
+
+The LaunchAgent runs `.venv/bin/python`, so the relay is only as durable as the
+Python it was installed against. On a managed Mac that Python can disappear —
+a cleanup policy wiping `/opt/homebrew` takes brew's Python with it — and the
+relay then fails to start at the next login, silently, right when you need it.
+
+`packaging/build-app.sh` builds a self-contained `ProxyRelay.app` with its own
+Python inside:
+
+```sh
+./packaging/build-app.sh             # build + ad-hoc sign into dist/
+./packaging/build-app.sh --install   # also install to ~/Applications and
+                                     # repoint the LaunchAgent at the bundle
+```
+
+Requires [uv](https://docs.astral.sh/uv/), which supplies the build Python and a
+throwaway environment — your runtime venv is left alone. The result is ~23 MB,
+`LSUIElement` (menubar only, no Dock tile), and ad-hoc signed: good enough for
+your own machine, not notarised for distribution.
+
+`config.json` and the icon are still read from `~/.proxy-relay` — a signed
+bundle is read-only, and writing inside it would break the signature.
+
+### Handing it to someone else
+
+```sh
+./packaging/make-dmg.sh      # -> dist/ProxyRelay-<arch>.dmg
+```
+
+A drag-to-install disk image: the bundle, an `Applications` symlink, the
+licence, and — for unsigned builds — a note explaining the Gatekeeper warning.
+
+**The bundle is architecture-specific.** It is built for the machine that builds
+it, so an `arm64` image will not run on an Intel Mac. Build on each
+architecture you need to support; the filename carries the arch so the two
+images don't collide.
+
+**Signing decides how the image lands.** By default it is ad-hoc signed, which
+is enough for your own machine but not for a download: macOS quarantines it and
+reports *"ProxyRelay is damaged and can't be opened"* — misleading, since
+nothing is damaged, it just isn't signed with a paid Apple certificate. The
+recipient has to clear the flag themselves:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ProxyRelay.app
+```
+
+With an Apple Developer account you can skip that entirely:
+
+```sh
+CODESIGN_IDENTITY="Developer ID Application: You (TEAMID)" \
+NOTARY_PROFILE=my-notary-profile \
+    ./packaging/make-dmg.sh
+```
+
+That signs with a hardened runtime, submits to Apple's notary service, and
+staples the ticket — the image then opens with a double click, no warnings.
+Store the profile once with `xcrun notarytool store-credentials`.
+
 ## Autostart & manual control
 
 It starts at login automatically (LaunchAgent). Manual control:
